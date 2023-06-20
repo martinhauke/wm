@@ -3,7 +3,7 @@
 # Help                                                     #
 ############################################################
 
-usage_string="Usage: `basename $0` [-d|h|s|t] file"
+usage_string="Usage: `basename $0` [-dh] [-s size] [-t text] file"
 
 Help()
 {
@@ -37,7 +37,7 @@ date=$(date "+%d.%m.%Y")
 # Process the input options. Add options as needed.        #
 ############################################################
 # Get the options
-while getopts ":hdost:" option; do
+while getopts "hds:t:" option; do
    case $option in
       h) # display Help
          Help
@@ -91,3 +91,5 @@ label:"${wm_text}" -trim -rotate -10 \
 +clone -fill mpr:wm  -draw 'color 0,0 reset' \) \
 -compose over -composite \
 ${output_file_path}
+
+echo "Saved result to ${output_file_path}"
