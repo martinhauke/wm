@@ -1,7 +1,13 @@
 # wm
 
-Add watermark to a picture. I wrote this mainly to put anoying but visible marks on copies of my ID card before sending somewhere.
-It's neither pretty nor clever but get's the work done.
+Add watermark to a picture. I wrote this mainly to put anoying but visible marks on copies of my ID card before sending it somewhere.
+It's neither pretty nor clever but get's the work done. It will also strip the metadata of the resulting image.
+
+It will not overwrite the original image. Instead, it will create a new image next to it (the watermark text will be appended to the file name).
+
+## Prerequisites
+
+* convert (part of the [imagemagick](https://imagemagick.org/script/download.php) tools)
 
 ## Usage
 
@@ -36,5 +42,7 @@ Set the watermark text.
 ### example
 
 ```shell
-wm -d -s 900 -t "Copy for some important place" ~/pictures/id/id_censored.jpeg
+sh ./wm.sh -d -s 900 -t "Copy for some important place" ~/pictures/id/id_censored.jpeg
+
+Saved result to /users/username/pictures/id/id_censored-copy-for-some-important-place-19.03.2024.jpg
 ```
