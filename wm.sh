@@ -90,6 +90,7 @@ label:"${wm_text}" -trim -rotate -10 \
 -write mpr:wm +delete \
 +clone -fill mpr:wm  -draw 'color 0,0 reset' \) \
 -compose over -composite \
+-strip \
 ${output_file_path}
 
 echo "Saved result to ${output_file_path}"
