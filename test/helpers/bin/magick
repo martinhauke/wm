@@ -1,0 +1,81 @@
+#!/bin/bash
+#
+# Test double for ImageMagick, used by test/cli.bats to exercise wm.sh's own
+# logic without the cost - and the nondeterminism - of the real binary. In
+# particular it can fail *after* having written something, which is impossible
+# to provoke reliably with the real magick.
+#
+# It is deliberately NOT a substitute for test/e2e.bats: only the real binary
+# can tell us whether the argument list wm.sh builds is still valid.
+#
+# Two call shapes are recognised, matching the two in wm.sh:
+#
+#   magick identify -ping FILE        -> is_magick_readable
+#   magick FILE ... OUTPUT            -> watermark_file
+#
+# Environment:
+#   WM_STUB_UNREADABLE  space separated globs; "identify" exits 1 when the
+#                       basename matches one of them (default: nothing matches)
+#   WM_STUB_MODE        behaviour of the watermarking call:
+#                         ok       write a placeholder and succeed (default)
+#                         fail     write nothing, exit 1
+#                         partial  write a truncated file, exit 1
+#   WM_STUB_ARGS_FILE   if set, every invocation appends its arguments here,
+#                       one line per call
+
+if [ -n "${WM_STUB_ARGS_FILE:-}" ]; then
+  printf '%s\n' "$*" >>"$WM_STUB_ARGS_FILE"
+fi
+
+############################################################
+# identify: answer whether the file is readable.           #
+# Must never write anything - the file it is asked about   #
+# is the last argument.                                    #
+############################################################
+
+if [ "$1" = "identify" ]; then
+  # The file is the last argument.
+  for target in "$@"; do :; done
+  base=$(basename "$target")
+
+  for pattern in ${WM_STUB_UNREADABLE:-}; do
+    # WM_STUB_UNREADABLE holds globs, so $pattern must NOT be quoted here.
+    # shellcheck disable=SC2254
+    case "$base" in
+      $pattern)
+        echo "magick stub: identify: '${target}' declared unreadable" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  echo "${target} STUB 1x1"
+  exit 0
+fi
+
+############################################################
+# watermarking call                                        #
+############################################################
+
+input="$1"
+for output in "$@"; do :; done
+
+case "${WM_STUB_MODE:-ok}" in
+  fail)
+    echo "magick: stub failure for '${input}'" >&2
+    exit 1
+    ;;
+  partial)
+    printf 'TRUNCATED' >"$output"
+    echo "magick: stub failed after a partial write for '${input}'" >&2
+    exit 1
+    ;;
+  ok)
+    printf 'FAKE-IMAGE %s' "$input" >"$output"
+    exit 0
+    ;;
+  *)
+    echo "magick stub: unknown WM_STUB_MODE '${WM_STUB_MODE}'" >&2
+    exit 99
+    ;;
+esac

@@ -1,0 +1,65 @@
+name: test
+
+# The runner labels here float on purpose, and each job installs what it needs
+# rather than relying on what happens to be baked into the image - the contents
+# of a runner image are not part of the label's contract, and it does change
+# (ubuntu-latest moves to Ubuntu 26 from 2026-10-19,
+# https://github.com/actions/runner-images/issues/14748).
+#
+# For magick-contract the floating label is the whole point: we want to hear
+# about it when a new ImageMagick lands, not to be insulated from it.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # Unit tests plus the black box CLI tests. Both run against the magick stub
+  # in test/helpers/bin, so they need no ImageMagick and stay fast.
+  logic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install bats
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+      - name: Unit and CLI tests
+        run: bats test/unit.bats test/cli.bats
+
+  # The tests that talk to the real ImageMagick. This is the layer that notices
+  # when magick changes its interface under us (as it did in 2851f17, "use
+  # magick instead of convert").
+  #
+  # It runs on macOS because Ubuntu still ships ImageMagick 6, which has no
+  # "magick" binary at all. WM_REQUIRE_MAGICK turns a missing magick into a
+  # failure rather than a skip - a silent skip here would hide exactly the
+  # breakage these tests exist to find.
+  magick-contract:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install bats and imagemagick
+        run: brew install bats-core imagemagick
+      - name: Show the magick version under test
+        run: magick --version
+      - name: Full suite against the real binary
+        env:
+          WM_REQUIRE_MAGICK: "1"
+        run: bats test/
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Installed explicitly. It happens to be preinstalled on the current
+      # Ubuntu runners, but relying on that makes this job break on the next
+      # image migration for no good reason.
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+      - name: shellcheck
+        run: |
+          shellcheck --version
+          shellcheck wm.sh test/helpers/bin/magick
