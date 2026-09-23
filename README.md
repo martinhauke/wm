@@ -12,22 +12,29 @@ It will not overwrite the original image. Instead, it will create a new image ne
 ## Usage
 
 ```shell
-wm [-dhr] [-s size] [-t text] [-o outdir] (-i indir | file)
+wm [-dhr] [-s size] [-t text] [-o outdir] file|folder ...
 
 Options:
 d     Add the current date to the watermark.
 h     Print this Help.
-i     Input folder. Watermark every image in it instead of a single file.
 o     Output folder. Defaults to the folder of each input image.
-r     Recurse into subfolders (only with -i). Mirrors the tree in the output folder.
+r     Recurse into subfolders of a folder argument.
 s     Set the font size.
 t     Set the text.
+```
+
+Every argument can be a file or a folder, and you can pass as many as you like:
+
+```shell
+./wm.sh -t "foo" ~/pictures/a.jpg ~/pictures/b.png     # two files
+./wm.sh -t "foo" ~/pictures/*.jpg                      # whatever the shell expands to
+./wm.sh -t "foo" -r ~/pictures                         # a whole folder tree
 ```
 
 By default wm will save the output to a separate file next to the original. Use `-o` to
 collect the results in a different folder instead.
 
-Note that options have to come *before* the file argument.
+Note that options have to come *before* the file and folder arguments.
 
 ### `-h` Help
 
@@ -45,17 +52,15 @@ The text size. It's not an exact size and depends a lot on how big the image and
 
 Set the watermark text.
 
-### `-i folder` Input folder
+### Folder arguments
 
-Watermark every image in the folder instead of a single file. Only files with a known
+If an argument is a folder, every image in it is watermarked. Only files with a known
 image extension are considered (`jpg`, `jpeg`, `png`, `tif`, `tiff`, `webp`, `heic`,
 `gif`, `bmp`); anything else is skipped silently.
 
 If a single image fails, the error is printed and the remaining files are still
 processed. The script prints a summary at the end and exits with `1` if at least one
 file failed.
-
-`-i` and a file argument are mutually exclusive.
 
 ### `-o folder` Output folder
 
@@ -65,23 +70,23 @@ way.
 
 ### `-r` Recursive
 
-Only useful together with `-i`. Also processes images in subfolders and recreates the
-folder structure below the output folder.
+Also process images in subfolders of a folder argument. Together with `-o` the folder
+structure is recreated below the output folder. It has no effect on file arguments.
 
 ### example for single file
 
 ```shell
-sh ./wm.sh -d -s 900 -t "Copy for some important place" ~/pictures/id/id_censored.jpeg
+./wm.sh -d -s 900 -t "Copy for some important place" ~/pictures/id/id_censored.jpeg
 
-Saved result to /users/username/pictures/id/id_censored-copy-for-some-important-place-19.03.2024.jpg
+Saved result to /users/username/pictures/id/id_censored_Copy-for-some-important-place-19.03.2024.jpeg
 ```
 
 ### batch example
 
 ```shell
-sh ./wm.sh -d -s 800 -t "watermark text" -r -i ~/pictures/website -o ~/pictures/watermarked
+./wm.sh -d -s 800 -t "watermark text" -r ~/pictures/website -o ~/pictures/watermarked
 
-Saved result to /users/username/pictures/watermarked/image-20.09.2026.jpg
+Saved result to /users/username/pictures/watermarked/image_watermark-text-20.09.2026.jpg
 ...
 Processed 24 file(s), 0 failed.
 ```

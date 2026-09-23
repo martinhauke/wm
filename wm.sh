@@ -3,7 +3,7 @@
 # Help                                                     #
 ############################################################
 
-usage_string="Usage: $(basename "$0") [-dhr] [-s size] [-t text] [-o outdir] (-i indir | file)"
+usage_string="Usage: $(basename "$0") [-dhr] [-s size] [-t text] [-o outdir] file|folder ..."
 
 Help()
 {
@@ -15,9 +15,8 @@ Help()
    echo "Options:"
    echo "d     Add the current date to the watermark."
    echo "h     Print this Help."
-   echo "i     Input folder. Watermark every image in it instead of a single file."
    echo "o     Output folder. Defaults to the folder of each input image."
-   echo "r     Recurse into subfolders (only with -i). Mirrors the tree in the output folder."
+   echo "r     Recurse into subfolders of a folder argument."
    echo "s     Set the font size."
    echo "t     Set the text."
    echo
@@ -33,7 +32,6 @@ Help()
 text="Watermark"
 is_show_date=false
 is_recursive=false
-input_dir=""
 output_dir=""
 font_size=600
 date=$(date "+%d.%m.%Y")
@@ -43,7 +41,7 @@ date=$(date "+%d.%m.%Y")
 # Process the input options. Add options as needed.        #
 ############################################################
 # Get the options
-while getopts "hdri:o:s:t:" option; do
+while getopts "hdro:s:t:" option; do
    case $option in
       h) # display Help
          Help
@@ -53,9 +51,6 @@ while getopts "hdri:o:s:t:" option; do
          ;;
       r) # recurse into subfolders
          is_recursive=true
-         ;;
-      i) # set the input folder
-         input_dir="${OPTARG%/}"
          ;;
       o) # set the output folder
          output_dir="${OPTARG%/}"
@@ -72,30 +67,16 @@ while getopts "hdri:o:s:t:" option; do
    esac
 done
 
-input_file_path="${@:$OPTIND:1}"
+# Drop the options so that "$@" holds only the files and folders to process.
+shift $((OPTIND - 1))
 
 ############################################################
 # Validate the arguments.                                  #
 ############################################################
 
-if [ -n "$input_dir" ] && [ -n "$input_file_path" ]; then
-    echo "Error: -i and a file argument are mutually exclusive."
+if [ $# -lt 1 ]; then
     echo "$usage_string"
     exit 1
-fi
-
-if [ -z "$input_dir" ] && [ -z "$input_file_path" ]; then
-    echo "$usage_string"
-    exit 1
-fi
-
-if [ -n "$input_dir" ] && [ ! -d "$input_dir" ]; then
-    echo "Error: input folder '${input_dir}' is not a directory."
-    exit 1
-fi
-
-if [ "$is_recursive" = true ] && [ -z "$input_dir" ]; then
-    echo "Warning: -r has no effect without -i; ignoring it."
 fi
 
 if [ -n "$output_dir" ] && ! mkdir -p "$output_dir"; then
@@ -121,11 +102,12 @@ font=$(fc-match -f '%{file}' 2>/dev/null)
 # Build the output path for $1 (source file) inside $2 (target directory).
 build_output_path()
 {
-  local _basename _without_extension _extension
+  local _dest_dir="$2" _basename _without_extension _extension
+  [ -n "$_dest_dir" ] || _dest_dir="."
   _basename=$(basename "$1")
   _without_extension="${_basename%.*}"
   _extension="${_basename##*.}"
-  echo "${2}/${_without_extension}_${file_name_postfix}.${_extension}"
+  printf '%s\n' "${_dest_dir}/${_without_extension}_${file_name_postfix}.${_extension}"
 }
 
 # Add the watermark to $1 and write the result to $2.
@@ -140,6 +122,21 @@ watermark_file()
   -compose over -composite \
   -strip \
   "$2"
+}
+
+# Return 0 if $1 already looks like the result of an earlier run with the same
+# text and date, so that repeatedly running over a folder does not stack
+# watermarks. Only used for files found in a folder - an explicitly named file
+# is always processed.
+is_own_output()
+{
+  local _basename _without_extension
+  _basename=$(basename "$1")
+  _without_extension="${_basename%.*}"
+  case "$_without_extension" in
+    *"_${file_name_postfix}") return 0;;
+    *) return 1;;
+  esac
 }
 
 # Return 0 if $1 has a known image extension.
@@ -157,21 +154,35 @@ is_image_file()
 processed=0
 failed=0
 
-# Watermark $1 and report the outcome. Never aborts the run.
+# Watermark $1 into the folder $2 and report the outcome. Never aborts the run.
 process_file()
 {
-  local _src="$1" _dest_dir="$2" _out _status
-  if [ -n "$_dest_dir" ] && ! mkdir -p "$_dest_dir"; then
+  local _src="$1" _dest_dir="$2" _out _tmp_out _status
+  [ -n "$_dest_dir" ] || _dest_dir="."
+  if ! mkdir -p "$_dest_dir"; then
     echo "Error: ${_src}: could not create output folder '${_dest_dir}'."
     failed=$((failed + 1))
     return
   fi
   _out=$(build_output_path "$_src" "$_dest_dir")
 
-  watermark_file "$_src" "$_out"
+  # Write to a temporary file first. magick can fail half way through and would
+  # otherwise leave a truncated image behind - or destroy the result of an
+  # earlier run. The extension is kept so magick still picks the right format.
+  _tmp_out="${_out%.*}.wm-tmp-$$.${_out##*.}"
+
+  watermark_file "$_src" "$_tmp_out"
   _status=$?
   if [ $_status -ne 0 ]; then
+    rm -f "$_tmp_out"
     echo "Error: ${_src}: magick failed with exit code ${_status}; no output written."
+    failed=$((failed + 1))
+    return
+  fi
+
+  if ! mv -f "$_tmp_out" "$_out"; then
+    rm -f "$_tmp_out"
+    echo "Error: ${_src}: could not move the result to '${_out}'."
     failed=$((failed + 1))
     return
   fi
@@ -180,41 +191,90 @@ process_file()
   echo "Saved result to ${_out}"
 }
 
+# Watermark every image in the folder $1. Honours -r and -o.
+process_dir()
+{
+  local _dir="${1%/}" _list _find_status _src _rel _rel_dir _dest_dir
+  local _find_args _files
+  _files=()
+
+  # "${1%/}" turns "/" into an empty string, which find would choke on.
+  [ -n "$_dir" ] || _dir="/"
+
+  _list=$(mktemp "${TMPDIR:-/tmp}/wm.XXXXXX")
+  if [ $? -ne 0 ] || [ -z "$_list" ]; then
+    echo "Error: ${_dir}: could not create a temporary file."
+    failed=$((failed + 1))
+    return
+  fi
+
+  # -L follows symlinks. Without it find silently yields nothing at all when the
+  # folder it is pointed at is a symlink.
+  _find_args=( -L "$_dir" )
+  [ "$is_recursive" = true ] || _find_args+=( -maxdepth 1 )
+  _find_args+=( -type f -print0 )
+
+  # Collect the complete list before processing anything: without -o the results
+  # are written into the very folder being scanned, and find must not pick them
+  # up as input again.
+  find "${_find_args[@]}" >"$_list"
+  _find_status=$?
+  if [ $_find_status -ne 0 ]; then
+    echo "Warning: ${_dir}: find exited with code ${_find_status}; some files may have been skipped."
+  fi
+
+  while IFS= read -r -d '' _src; do
+    is_image_file "$_src" || continue
+    is_own_output "$_src" && continue
+    _files+=( "$_src" )
+  done <"$_list"
+  rm -f "$_list"
+
+  for _src in "${_files[@]}"; do
+    if [ -z "$output_dir" ]; then
+      _dest_dir=$(dirname "$_src")
+    elif [ "$is_recursive" = true ]; then
+      _rel="${_src#"$_dir"/}"
+      _rel_dir=$(dirname "$_rel")
+      if [ "$_rel_dir" = "." ]; then
+        _dest_dir="$output_dir"
+      else
+        _dest_dir="${output_dir}/${_rel_dir}"
+      fi
+    else
+      _dest_dir="$output_dir"
+    fi
+
+    process_file "$_src" "$_dest_dir"
+  done
+}
+
 ############################################################
 # Add watermark to the image(s) and save the result(s).    #
 ############################################################
 
-if [ -z "$input_dir" ]; then
-  # Single file mode.
-  dest_dir="$output_dir"
-  [ -n "$dest_dir" ] || dest_dir=$(dirname "$input_file_path")
-  process_file "$input_file_path" "$dest_dir"
-else
-  # Folder mode.
-  find_args=( "$input_dir" )
-  [ "$is_recursive" = true ] || find_args+=( -maxdepth 1 )
-  find_args+=( -type f -print0 )
+# Print a summary whenever more than one file can be involved.
+is_batch=false
+if [ $# -gt 1 ]; then
+  is_batch=true
+fi
 
-  while IFS= read -r -d '' src; do
-    is_image_file "$src" || continue
+for target in "$@"; do
+  if [ -d "$target" ]; then
+    is_batch=true
+    process_dir "$target"
+  elif [ -f "$target" ]; then
+    process_file "$target" "${output_dir:-$(dirname "$target")}"
+  else
+    echo "Error: '${target}' is not a file or a folder."
+    case "$target" in
+      -*) echo "       Options have to come before the files and folders.";;
+    esac
+    failed=$((failed + 1))
+  fi
+done
 
-    if [ -z "$output_dir" ]; then
-      dest_dir=$(dirname "$src")
-    elif [ "$is_recursive" = true ]; then
-      rel="${src#"$input_dir"/}"
-      rel_dir=$(dirname "$rel")
-      if [ "$rel_dir" = "." ]; then
-        dest_dir="$output_dir"
-      else
-        dest_dir="${output_dir}/${rel_dir}"
-      fi
-    else
-      dest_dir="$output_dir"
-    fi
-
-    process_file "$src" "$dest_dir"
-  done < <(find "${find_args[@]}")
-
+if [ "$is_batch" = true ]; then
   echo "Processed ${processed} file(s), ${failed} failed."
 fi
 
